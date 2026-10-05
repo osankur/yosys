@@ -221,6 +221,23 @@ pyosys_headers = [
             ),
         ],
     ),
+    PyosysHeader(
+        "kernel/sigtools.h",
+        [
+            # SigMap's interesting members (`apply`, `operator()`) are inherited
+            # from SigMapView, so both need to be wrapped for them to show up.
+            PyosysClass(
+                "SigMapView",
+                # mfp<> has no pybind11 type caster
+                denylist=frozenset({"database"}),
+            ),
+            PyosysClass(
+                "SigMap",
+                # no hash_into(), so it can't be fed to run_hash()
+                denylist=frozenset({"database"}),
+            ),
+        ],
+    ),
 ]
 
 
@@ -539,6 +556,8 @@ class PyosysWrapperGenerator(object):
                 python_name_override = "__lt__"
             elif function.operator == "[]" and function.const:
                 python_name_override = "__getitem__"
+            elif function.operator == "()":
+                python_name_override = "__call__"
             else:
                 return
 
