@@ -30,7 +30,7 @@ static bool is_formal_celltype(const std::string &celltype)
 		return false;
 }
 
-static void add_formal(RTLIL::Module *module, const std::string &celltype, const std::string &name, const std::string &enable_name)
+static void add_formal(RTLIL::Module *module, const std::string &celltype, const std::string &name, const std::string &enable_name, bool negate)
 {
 	std::string escaped_name = RTLIL::escape_id(name);
 	std::string escaped_enable_name = (enable_name != "") ? RTLIL::escape_id(enable_name) : "";
@@ -39,21 +39,27 @@ static void add_formal(RTLIL::Module *module, const std::string &celltype, const
 
 	if (wire == nullptr) {
 		log_error("Could not find wire with name \"%s\".\n", name);
-	}
-	else {
-		RTLIL::Cell *formal_cell = module->addCell(NEW_ID, "$" + celltype);
-		formal_cell->setPort(ID::A, wire);
-		if(enable_name == "") {
-			formal_cell->setPort(ID::EN, State::S1);
-			log("Added $%s cell for wire \"%s.%s\"\n", celltype, module->name.str(), name);
+	} else {
+		RTLIL::SigSpec sig_a = wire;
+		if (negate) {
+			RTLIL::Wire *neg_wire = module->addWire(NEW_ID, wire->width);
+			module->addNot(NEW_ID, wire, neg_wire);
+			sig_a = neg_wire;
 		}
-		else {
+
+		RTLIL::Cell *formal_cell = module->addCell(NEW_ID, "$" + celltype);
+		formal_cell->setPort(ID::A, sig_a);
+		if (enable_name == "") {
+			formal_cell->setPort(ID::EN, State::S1);
+			log("Added $%s cell for wire \"%s.%s\"%s\n", celltype, module->name.str(), name, negate ? " (negated)" : "");
+		} else {
 			RTLIL::Wire *enable_wire = module->wire(escaped_enable_name);
-			if(enable_wire == nullptr)
+			if (enable_wire == nullptr)
 				log_error("Could not find enable wire with name \"%s\".\n", enable_name);
 
 			formal_cell->setPort(ID::EN, enable_wire);
-			log("Added $%s cell for wire \"%s.%s\" enabled by wire \"%s.%s\".\n", celltype, module->name.str(), name, module->name.str(), enable_name);
+			log("Added $%s cell for wire \"%s.%s\"%s enabled by wire \"%s.%s\".\n", celltype, module->name.str(), name,
+			    negate ? " (negated)" : "", module->name.str(), enable_name);
 		}
 	}
 }
@@ -115,7 +121,7 @@ static void add_wire(RTLIL::Design *design, RTLIL::Module *module, std::string n
 }
 
 struct AddPass : public Pass {
-	AddPass() : Pass("add", "add objects to the design") { }
+	AddPass() : Pass("add", "add objects to the design") {}
 	void help() override
 	{
 		//   |---v---|---v---|---v---|---v---|---v---|---v---|---v---|---v---|---v---|---v---|
@@ -139,10 +145,11 @@ struct AddPass : public Pass {
 		log("selected modules.\n");
 		log("\n");
 		log("\n");
-		log("    add {-assert|-assume|-live|-fair|-cover} <name1> [-if <name2>]\n");
+		log("    add {-assert|-assume|-live|-fair|-cover} [-not] <name1> [-if <name2>]\n");
 		log("\n");
 		log("Add an $assert, $assume, etc. cell connected to a wire named name1, with its\n");
 		log("enable signal optionally connected to a wire named name2 (default: 1'b1).\n");
+		log("With -not, the negated value of name1 is used instead.\n");
 		log("\n");
 		log("\n");
 		log("    add -mod <name[s]>\n");
@@ -158,6 +165,7 @@ struct AddPass : public Pass {
 		bool arg_flag_input = false;
 		bool arg_flag_output = false;
 		bool arg_flag_global = false;
+		bool arg_flag_negate = false;
 		bool mod_mode = false;
 		int arg_width = 0;
 
@@ -188,7 +196,14 @@ struct AddPass : public Pass {
 				if (argidx + 1 >= args.size())
 					break;
 				command = arg.substr(1);
-				arg_name = args[++argidx];
+				argidx++;
+				if (argidx < args.size() && args[argidx] == "-not") {
+					arg_flag_negate = true;
+					argidx++;
+				}
+				if (argidx >= args.size())
+					break;
+				arg_name = args[argidx];
 				if (argidx + 2 < args.size() && args[argidx + 1] == "-if") {
 					enable_name = args[argidx + 2];
 					argidx += 2;
@@ -217,7 +232,7 @@ struct AddPass : public Pass {
 
 			selected_anything = true;
 			if (is_formal_celltype(command))
-				add_formal(module, command, arg_name, enable_name);
+				add_formal(module, command, arg_name, enable_name, arg_flag_negate);
 			else if (command == "wire")
 				add_wire(design, module, arg_name, arg_width, arg_flag_input, arg_flag_output, arg_flag_global);
 		}
