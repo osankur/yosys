@@ -1,0 +1,27 @@
+read_verilog -formal <<EOT
+module top(input clk, input a, input b, input en);
+    reg r;
+    always @(posedge clk)
+        r <= a;
+endmodule
+EOT
+
+prep
+
+# Plain assert/assume: no inverter cells.
+add -assert a
+add -assume b -if en
+select -assert-count 1 t:$assert
+select -assert-count 1 t:$assume
+select -assert-none t:$not
+
+# Negated assert/assume: one inverter per formal cell.
+add -assert -not a
+add -assume -not b -if en
+select -assert-count 2 t:$assert
+select -assert-count 2 t:$assume
+select -assert-count 2 t:$not
+
+# Each negated formal cell must be fed by exactly one inverter.
+select -assert-count 1 t:$not %ci t:$assert
+select -assert-count 1 t:$not %ci t:$assume
